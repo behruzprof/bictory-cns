@@ -1,0 +1,182 @@
+image:
+  name: docker/compose:1.29.2
+  entrypoint: [""]
+
+services:
+  - docker:dind
+
+
+stages:
+  - build-staging
+  - deploy-staging
+  - staging-notification
+  - build-production
+  - deploy-production
+  - production-notification
+
+
+variables:
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_DRIVER: overlay2
+  AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+  AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+  AWS_DEFAULT_REGION: eu-west-2
+  DOCKER_TLS_CERTDIR: ""
+
+
+
+
+Build Staging:
+  only:
+    - staging
+  stage: build-staging
+  script:
+  - apk add --no-cache curl jq python3 py3-pip
+  - pip install awscli
+  - apk add --no-cache openssh-client bash
+  - chmod +x setup_env_stg.sh
+  - bash setup_env_stg.sh
+  - aws ecr get-login-password | docker login --username AWS --password-stdin 782057639577.dkr.ecr.eu-west-2.amazonaws.com
+  - aws --version
+  - docker info
+  - docker --version
+  - docker build . -f Dockerfile_stg --tag 782057639577.dkr.ecr.eu-west-2.amazonaws.com/cns-front-stg:latest
+  - docker push 782057639577.dkr.ecr.eu-west-2.amazonaws.com/cns-front-stg:latest
+
+Deploy Staging:
+  only:
+    - staging
+  stage: deploy-staging
+  script:
+    - apk add --no-cache curl jq python3 py3-pip
+    - pip install awscli
+    - apk add --no-cache openssh-client bash
+    - chmod +x setup_env_stg.sh
+    - bash setup_env_stg.sh
+    - aws ecr get-login-password | docker login --username AWS --password-stdin 782057639577.dkr.ecr.eu-west-2.amazonaws.com
+    - aws --version
+    - docker info
+    - docker --version
+
+    - mkdir -p ~/.ssh
+    - echo "$PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 700 ~/.ssh/id_rsa
+    - eval "$(ssh-agent -s)"
+    - ssh-add ~/.ssh/id_rsa
+    - ssh-keyscan -H 'gitlab.com' >> ~/.ssh/known_hosts
+    - chmod +x deploy_docker_stg.sh
+    - scp  -o StrictHostKeyChecking=no -r Dockerfile_stg  .env.staging ubuntu@$STAGING_SERVER:/home/ubuntu/staging/cns-front
+    - bash deploy_docker_stg.sh
+
+
+
+Staging Notification Pass:
+  stage: staging-notification
+  script:
+    - apk add --update curl
+
+    - curl -s
+      "https://api.telegram.org/bot{$TELEGRAM_TOKEN}/sendMessage"
+      -F chat_id=$TELEGRAM_CHAT_ID
+      -F text="🟢 CNS Front Staging Deployed by {$CI_COMMIT_AUTHOR}"
+
+    - 'curl -X POST -H "Content-type: application/json" --data "{\"text\":\"🟢 CNS Front Staging Deployed by $CI_COMMIT_AUTHOR\"}" {$SLACK_URL}'
+
+  only:
+    - staging
+  when: on_success
+
+Staging Notification Fail:
+  stage: staging-notification
+  script:
+    - apk add --update curl
+    - curl -s
+      "https://api.telegram.org/bot{$TELEGRAM_TOKEN}/sendMessage"
+      -F chat_id=$TELEGRAM_CHAT_ID
+      -F text="🔴 CNS Front Staging Deploy Failed by {$CI_COMMIT_AUTHOR}"
+
+    - 'curl -X POST -H "Content-type: application/json" --data "{\"text\":\"🔴 CNS Front Staging Deploy Failed by $CI_COMMIT_AUTHOR\"}" {$SLACK_URL}'
+
+  only:
+    - staging
+  when: on_failure
+
+
+
+
+
+Build Production:
+  only:
+    - main
+  stage: build-production
+  script:
+  - apk add --no-cache curl jq python3 py3-pip
+  - pip install awscli
+  - apk add --no-cache openssh-client bash
+  - chmod +x setup_env_prod.sh
+  - bash setup_env_prod.sh
+  - aws ecr get-login-password | docker login --username AWS --password-stdin 782057639577.dkr.ecr.eu-west-2.amazonaws.com
+  - aws --version
+  - docker info
+  - docker --version
+  - docker build . -f Dockerfile_prod --tag 782057639577.dkr.ecr.eu-west-2.amazonaws.com/cns-front-prod:latest
+  - docker push 782057639577.dkr.ecr.eu-west-2.amazonaws.com/cns-front-prod:latest
+
+Deploy Production:
+  only:
+    - main
+  stage: deploy-production
+  script:
+    - apk add --no-cache curl jq python3 py3-pip
+    - pip install awscli
+    - apk add --no-cache openssh-client bash
+    - chmod +x setup_env_prod.sh
+    - bash setup_env_prod.sh
+    - aws ecr get-login-password | docker login --username AWS --password-stdin 782057639577.dkr.ecr.eu-west-2.amazonaws.com
+    - aws --version
+    - docker info
+    - docker --version
+
+    - mkdir -p ~/.ssh
+    - echo "$PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 700 ~/.ssh/id_rsa
+    - eval "$(ssh-agent -s)"
+    - ssh-add ~/.ssh/id_rsa
+    - ssh-keyscan -H 'gitlab.com' >> ~/.ssh/known_hosts
+    - chmod +x deploy_docker_prod.sh
+    - scp  -o StrictHostKeyChecking=no -r Dockerfile_prod  .env.production ubuntu@$PROD_SERVER:/home/ubuntu/production/cns-front
+    - bash deploy_docker_prod.sh
+
+
+
+Production Notification Pass:
+  stage: production-notification
+  script:
+    - apk add --update curl
+
+    - curl -s
+      "https://api.telegram.org/bot{$TELEGRAM_TOKEN}/sendMessage"
+      -F chat_id=$TELEGRAM_CHAT_ID
+      -F text="🟢 CNS Front Production Deployed by {$CI_COMMIT_AUTHOR}"
+
+    - 'curl -X POST -H "Content-type: application/json" --data "{\"text\":\"🟢 CNS Front Production Deployed by $CI_COMMIT_AUTHOR\"}" {$SLACK_URL}'
+
+  only:
+    - main
+  when: on_success
+
+Production Notification Fail:
+  stage: production-notification
+  script:
+    - apk add --update curl
+    - curl -s
+      "https://api.telegram.org/bot{$TELEGRAM_TOKEN}/sendMessage"
+      -F chat_id=$TELEGRAM_CHAT_ID
+      -F text="🔴 CNS Front Production Deploy Failed by {$CI_COMMIT_AUTHOR}"
+
+    - 'curl -X POST -H "Content-type: application/json" --data "{\"text\":\"🔴 CNS Front Production Deploy Failed by $CI_COMMIT_AUTHOR\"}" {$SLACK_URL}'
+
+  only:
+    - main
+  when: on_failure
+
